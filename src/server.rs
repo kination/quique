@@ -22,7 +22,7 @@ impl Server {
 
     pub async fn run(self) -> Result<()> {
         let listener = TcpListener::bind(&self.addr).await?;
-        println!("qbus listening on {}", self.addr);
+        println!("quique server listening on {}", self.addr);
         
         loop {
             let (sock, _) = listener.accept().await?;
