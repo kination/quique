@@ -1,6 +1,26 @@
 [package]
 name = "quique"
-version = "0.0.0"
+version = "0.0.1"
 edition = "2024"
 
 [dependencies]
+tokio = { version = "1", features = ["full"] }
+bytes = "1"
+thiserror = "1"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+dashmap = "6"
+crossbeam-queue = "0.3"
+clap = { version = "4", features = ["derive"] }
+seahash = "4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "qq-server"
+path = "src/main.rs"
+
+[[bin]]
+name = "qq-cli"
+path = "src/cli/main.rs"
