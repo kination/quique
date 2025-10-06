@@ -5,6 +5,7 @@ quique[ˈkiːke] is in-memory queue system
 ## How-to
 ### Run server
 ```
+// Add 'RUST_LOG=info' for logging
 $ cargo run --bin qq-server
 ...
 quique server listening on 127.0.0.1:7001

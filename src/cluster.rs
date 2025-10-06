@@ -1,5 +1,5 @@
-use serde::{Deserialize};
 use seahash::hash;
+use serde::Deserialize;
 use std::sync::Arc;
 
 #[derive(Debug, Clone, Deserialize)]
@@ -22,9 +22,15 @@ impl Cluster {
         let me_id = std::env::var("QBUS_NODE_ID")?;
         let nodes_json = std::env::var("QBUS_NODES")?;
         let nodes: Vec<Node> = serde_json::from_str(&nodes_json)?;
-        let me = nodes.iter().find(|n| n.id == me_id).cloned()
+        let me = nodes
+            .iter()
+            .find(|n| n.id == me_id)
+            .cloned()
             .ok_or_else(|| anyhow::anyhow!("me id not in QBUS_NODES"))?;
-        Ok(Self { me, nodes: Arc::new(nodes) })
+        Ok(Self {
+            me,
+            nodes: Arc::new(nodes),
+        })
     }
 
     /// Rendezvous hashing: 가장 큰 hash(node, topic, partition)
