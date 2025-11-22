@@ -1,15 +1,15 @@
 use anyhow::Result;
-use bytes::{BufMut, BytesMut};
+use bytes::BytesMut;
 use std::sync::Arc;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
 };
-use tracing::{info, warn, error};
+use tracing::{info, warn};
  
 use crate::cluster::Cluster;
 use crate::protocol::*;
-use crate::queue::{Topic, TopicRegistry};
+use crate::queue::TopicRegistry;
  
 use crate::handler;
  

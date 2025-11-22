@@ -19,8 +19,11 @@ impl Cluster {
     /// QBUS_NODE_ID="node-a"
     /// QBUS_NODES='[{"id":"node-a","addr":"127.0.0.1:7001"},{"id":"node-b","addr":"127.0.0.1:7002"}]'
     pub fn from_env() -> anyhow::Result<Self> {
-        let me_id = std::env::var("QBUS_NODE_ID")?;
-        let nodes_json = std::env::var("QBUS_NODES")?;
+        let me_id = std::env::var("QBUS_NODE_ID").unwrap_or_else(|_| "node-a".to_string());
+        let nodes_json = std::env::var("QBUS_NODES").unwrap_or_else(|_| {
+            r#"[{"id":"node-a","addr":"127.0.0.1:7001"},{"id":"node-b","addr":"127.0.0.1:7002"}]"#
+                .to_string()
+        });
         let nodes: Vec<Node> = serde_json::from_str(&nodes_json)?;
         let me = nodes
             .iter()
@@ -33,11 +36,11 @@ impl Cluster {
         })
     }
 
-    /// Rendezvous hashing: 가장 큰 hash(node, topic, partition)
-    pub fn leader_of(&self, topic: &str, partition: u32) -> Node {
+    /// Rendezvous hashing: 가장 큰 hash(node, topic)
+    pub fn leader_of(&self, topic: &str) -> Node {
         let mut best: Option<(&Node, u64)> = None;
         for n in self.nodes.iter() {
-            let key = format!("{}:{}:{}", n.id, topic, partition);
+            let key = format!("{}:{}", n.id, topic);
             let score = hash(key.as_bytes());
             if best.map(|(_, s)| score > s).unwrap_or(true) {
                 best = Some((n, score));
@@ -46,7 +49,7 @@ impl Cluster {
         best.unwrap().0.clone()
     }
 
-    pub fn is_leader(&self, topic: &str, partition: u32) -> bool {
-        self.leader_of(topic, partition).id == self.me.id
+    pub fn is_leader(&self, topic: &str) -> bool {
+        self.leader_of(topic).id == self.me.id
     }
 }

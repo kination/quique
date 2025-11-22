@@ -15,11 +15,11 @@ pub struct DiskLog {
 }
 
 impl DiskLog {
-    pub fn open<P: AsRef<Path>>(dir: P, topic: &str, part: u32) -> Result<Self> {
+    pub fn open<P: AsRef<Path>>(dir: P, topic: &str) -> Result<Self> {
         let dir = dir.as_ref();
         std::fs::create_dir_all(dir)?;
-        let path = dir.join(format!("{}-{}.log", topic, part));
-        let ack_path = dir.join(format!("{}-{}.ack", topic, part));
+        let path = dir.join(format!("{}.log", topic));
+        let ack_path = dir.join(format!("{}.ack", topic));
         let f = OpenOptions::new()
             .create(true)
             .append(true)
