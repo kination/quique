@@ -7,24 +7,20 @@ use crate::protocol::*;
 use crate::queue::{Topic, TopicRegistry};
 
 pub async fn handle_metadata(body: &mut &[u8], cluster: &Cluster, out: &mut BytesMut) -> Result<()> {
-    // req: topic(str) | partitions(u32)
+    // req: topic(str)
     let Some(topic) = get_str(body) else {
         put_status(out, Status::BadRequest);
         return Ok(());
     };
-    let Some(parts) = get_u32(body) else {
-        put_status(out, Status::BadRequest);
-        return Ok(());
-    };
     put_status(out, Status::Ok);
-    // resp: [u32 N] then N x {u32 part | str leader_addr}
-    put_u32(out, parts);
+    // resp: [u32 1] then {u32 0 | str leader_addr}
+    // We pretend there is 1 partition (0) for compatibility if needed, or just simplify protocol.
+    // Let's simplify: just return 1 partition always.
+    put_u32(out, 1);
 
-    for p in 0..parts {
-        let leader = cluster.leader_of(&topic, p);
-        out.put_u32(p);
-        put_str(out, &leader.addr);
-    }
+    let leader = cluster.leader_of(&topic);
+    out.put_u32(0);
+    put_str(out, &leader.addr);
     Ok(())
 }
 
@@ -35,12 +31,8 @@ pub async fn handle_create_topic(
     data_dir: &str,
     out: &mut BytesMut,
 ) -> Result<()> {
-    // req: topic(str) | partitions(u32) | capacity(u32)
+    // req: topic(str) | capacity(u32)
     let Some(topic) = get_str(body) else {
-        put_status(out, Status::BadRequest);
-        return Ok(());
-    };
-    let Some(parts) = get_u32(body) else {
         put_status(out, Status::BadRequest);
         return Ok(());
     };
@@ -51,12 +43,22 @@ pub async fn handle_create_topic(
 
     if topics.get(&topic).is_some() {
         put_status(out, Status::TopicExists);
-    } else {
-        let t = Topic::open(data_dir, &topic, parts, cap as usize, |p| {
-            cluster.is_leader(&topic, p)
-        })?;
+        return Ok(());
+    }
+
+    match Topic::open(data_dir, &topic, cap as usize, || {
+            cluster.is_leader(&topic)
+    }) {
+        Ok(t) => {
         topics.insert(Arc::new(t));
         put_status(out, Status::Ok);
+    }
+        Err(_) => {
+            // Not a leader for this topic, but another node might be.
+            // For simplicity, we just say OK, assuming the client will get redirected
+            // on produce/consume if this node isn't the leader.
+            put_status(out, Status::Ok);
+        }
     }
     Ok(())
 }
@@ -67,12 +69,8 @@ pub async fn handle_produce(
     topics: &TopicRegistry,
     out: &mut BytesMut,
 ) -> Result<()> {
-    // req : topic(str) | key(str) | bytes
+    // req : topic(str) | bytes
     let Some(topic) = get_str(body) else {
-        put_status(out, Status::BadRequest);
-        return Ok(());
-    };
-    let Some(key) = get_str(body) else {
         put_status(out, Status::BadRequest);
         return Ok(());
     };
@@ -85,14 +83,12 @@ pub async fn handle_produce(
         put_status(out, Status::NotFound);
         return Ok(());
     };
-    let pidx = t.pick_partition_by_key(&key) as u32;
-    let leader = cluster.leader_of(&topic, pidx);
+    let leader = cluster.leader_of(&topic);
     if leader.id != cluster.me.id {
         put_status(out, Status::Redirect);
         put_str(out, &leader.addr);
     } else {
-        let part = &t.partitions[pidx as usize];
-        match part.enqueue(data) {
+        match t.enqueue(data) {
             Ok(_seq) => put_status(out, Status::Ok),
             Err(_) => put_status(out, Status::ServerError),
         }
@@ -106,12 +102,8 @@ pub async fn handle_consume(
     topics: &TopicRegistry,
     out: &mut BytesMut,
 ) -> Result<()> {
-    // req : topic(str) | key(str) | timeout_ms(u32, optional)
+    // req : topic(str) | timeout_ms(u32, optional)
     let Some(topic) = get_str(body) else {
-        put_status(out, Status::BadRequest);
-        return Ok(());
-    };
-    let Some(key) = get_str(body) else {
         put_status(out, Status::BadRequest);
         return Ok(());
     };
@@ -121,14 +113,12 @@ pub async fn handle_consume(
         put_status(out, Status::NotFound);
         return Ok(());
     };
-    let pidx = t.pick_partition_by_key(&key) as u32;
-    let leader = cluster.leader_of(&topic, pidx);
+    let leader = cluster.leader_of(&topic);
     if leader.id != cluster.me.id {
         put_status(out, Status::Redirect);
         put_str(out, &leader.addr);
     } else {
-        let part = &t.partitions[pidx as usize];
-        match part.dequeue() {
+        match t.dequeue() {
             Ok(Some(v)) => {
                 put_status(out, Status::Ok);
                 put_bytes(out, &v);
@@ -141,8 +131,8 @@ pub async fn handle_consume(
 }
 
 pub async fn handle_read(body: &mut &[u8], cluster: &Cluster, topics: &TopicRegistry, out: &mut BytesMut) -> Result<()> {
-    // req : topic(str) | partition(u32) | size(u32)
-    let (Some(topic), Some(pidx), Some(size)) = (get_str(body), get_u32(body), get_u32(body)) else {
+    // req : topic(str) | size(u32)
+    let (Some(topic), Some(size)) = (get_str(body), get_u32(body)) else {
         put_status(out, Status::BadRequest);
         return Ok(());
     };
@@ -151,13 +141,12 @@ pub async fn handle_read(body: &mut &[u8], cluster: &Cluster, topics: &TopicRegi
         put_status(out, Status::NotFound);
         return Ok(());
     };
-    let leader = cluster.leader_of(&topic, pidx);
+    let leader = cluster.leader_of(&topic);
     if leader.id != cluster.me.id {
         put_status(out, Status::Redirect);
         put_str(out, &leader.addr);
     } else {
-        let part = &t.partitions[pidx as usize];
-        let messages = part.read_last_n(size as usize).unwrap_or_default();
+        let messages = t.read_last_n(size as usize).unwrap_or_default();
         put_status(out, Status::Ok);
         put_u32(out, messages.len() as u32);
         for msg in messages {

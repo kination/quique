@@ -16,11 +16,11 @@ Create and produce message to topic
 ```
 $ cargo run --bin qq-cli create --topic sample
 ...
-$ cargo run --bin qq-cli produce --topic sample --key topic --data "hello"
+$ cargo run --bin qq-cli produce --topic sample --data "hello"
 ```
 
 Consume message from topic
 ```
-$ cargo run --bin qq-cli consume --topic sample --key topic
+$ cargo run --bin qq-cli consume --topic sample
 value=hello
 ```

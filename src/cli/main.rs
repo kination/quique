@@ -22,49 +22,34 @@ enum Cmd {
         #[arg(long)]
         topic: String,
 
-        #[arg(long, default_value_t = 1)]
-        partitions: u32,
-
         #[arg(long, default_value_t = 1024)]
         capacity: u32,
     },
 
-    /// Send value bound to key (for partitioning)
+    /// Send value
     Produce {
         #[arg(long)]
         topic: String,
 
         #[arg(long)]
-        key: String,
-
-        #[arg(long)]
         data: String,
     },
 
-    /// Fetch from partition determined by key
+    /// Fetch from topic
     Consume {
         #[arg(long)]
         topic: String,
-
-        #[arg(long)]
-        key: String,
     },
     /// Metadata dump
     Metadata {
         #[arg(long)]
         topic: String,
-
-        #[arg(long, default_value_t = 4)]
-        partitions: u32,
     },
 
     /// Read last N messages from a topic (for debugging)
     Read {
         #[arg(long)]
         topic: String,
-
-        #[arg(long, default_value_t = 0)]
-        partition: u32,
 
         #[arg(long, default_value_t = 10)]
         size: u32,
@@ -108,31 +93,27 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
     match cmd {
         Cmd::Create {
             topic,
-            partitions,
             capacity,
         } => {
-            println!("Create topic {:?} {:?} {:?}", topic, partitions, capacity);
+            println!("Create topic {:?} {:?}", topic, capacity);
             call(&server, Op::CreateTopic, |b| {
                 put_str(b, &topic);
-                put_u32(b, partitions);
                 put_u32(b, capacity);
             })
             .await?;
         }
-        Cmd::Produce { topic, key, data } => {
+        Cmd::Produce { topic, data } => {
             let data_bytes = data.as_bytes();
-            let (st, payload) = redirecting_call_resp(&server, Op::Produce, |b| {
+            let (st, _payload) = redirecting_call_resp(&server, Op::Produce, |b| {
                 put_str(b, &topic);
-                put_str(b, &key);
                 put_bytes(b, data_bytes);
             })
             .await?;
             println!("status={:?}", st);
         }
-        Cmd::Consume { topic, key } => {
+        Cmd::Consume { topic } => {
             let (st, payload) = redirecting_call_resp(&server, Op::Consume, |b| {
                 put_str(b, &topic);
-                put_str(b, &key);
                 put_u32(b, 0);
             })
             .await?;
@@ -146,11 +127,10 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
                 }
             }
         }
-        Cmd::Metadata { topic, partitions } => {
+        Cmd::Metadata { topic } => {
             let mut s = connect(&server).await?;
             let mut body = BytesMut::new();
             put_str(&mut body, &topic);
-            put_u32(&mut body, partitions);
             let (st, payload) = rpc(&mut s, Op::Metadata, &body).await?;
             println!("status={:?}", st);
             if st == Status::Ok {
@@ -166,12 +146,10 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
         }
         Cmd::Read {
             topic,
-            partition,
             size,
         } => {
             let (st, payload) = redirecting_call_resp(&server, Op::Read, |b| {
                 put_str(b, &topic);
-                put_u32(b, partition);
                 put_u32(b, size);
             })
             .await?;
@@ -181,14 +159,14 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
                 if let Some(n) = get_u32(&mut b) {
                     if n == 0 {
                         println!(
-                            "No messages found in topic '{}' partition {}.",
-                            topic, partition
+                            "No messages found in topic '{}'.",
+                            topic
                         );
                         return Ok(());
                     }
                     println!(
-                        "Found {} messages in topic '{}' partition {}:",
-                        n, topic, partition
+                        "Found {} messages in topic '{}':",
+                        n, topic
                     );
                     for i in 0..n {
                         if let Some(msg) = get_bytes(&mut b) {
