@@ -32,7 +32,10 @@ async fn main() -> anyhow::Result<()> {
     let cluster = Cluster::from_env()?;
 
     // start host server
-    let srv = Server::new(args.addr, args.data_dir, cluster);
+    if let Err(e) = Server::new(args.addr, args.data_dir, cluster).run().await {
+        tracing::error!("server error: {}", e);
+        return Err(e);
+    }
 
-    srv.run().await
+    Ok(())
 }

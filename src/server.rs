@@ -9,7 +9,7 @@ use tracing::{info, warn};
  
 use crate::cluster::Cluster;
 use crate::protocol::*;
-use crate::queue::TopicRegistry;
+use crate::queue::Registry;
  
 use crate::handler;
  
@@ -17,7 +17,7 @@ pub struct Server {
     addr: String,
     data_dir: String,
     cluster: Cluster,
-    topics: Arc<TopicRegistry>,
+    registry: Arc<Registry>,
 }
 
 /// Central server application for messaging
@@ -27,7 +27,7 @@ impl Server {
             addr,
             data_dir,
             cluster,
-            topics: Arc::new(TopicRegistry::new()),
+            registry: Arc::new(Registry::new()),
         }
     } 
 
@@ -38,11 +38,11 @@ impl Server {
         loop {
             let (sock, _) = listener.accept().await?;
             let me = self.cluster.clone();
-            let topics = self.topics.clone();
+            let registry = self.registry.clone();
             let data_dir = self.data_dir.clone();
             tokio::spawn(async move {
                 // info!("New connection on {:?}", sock.peer_addr());
-                if let Err(e) = handle_conn(sock, me, topics, data_dir).await {
+                if let Err(e) = handle_conn(sock, me, registry, data_dir).await {
                     warn!("conn closed: {}", e);
                 }
             });
@@ -53,7 +53,7 @@ impl Server {
 async fn handle_conn(
     mut sock: TcpStream,
     cluster: Cluster,
-    topics: Arc<TopicRegistry>,
+    registry: Arc<Registry>,
     data_dir: String,
 ) -> Result<()> {
 
@@ -96,10 +96,12 @@ async fn handle_conn(
 
         match hdr.op {
             Op::Metadata => handler::handle_metadata(&mut body_slice, &cluster, &mut out).await?,
-            Op::CreateTopic => handler::handle_create_topic(&mut body_slice, &cluster, &topics, &data_dir, &mut out).await?,
-            Op::Produce => handler::handle_produce(&mut body_slice, &cluster, &topics, &mut out).await?,
-            Op::Consume => handler::handle_consume(&mut body_slice, &cluster, &topics, &mut out).await?,
-            Op::Read => handler::handle_read(&mut body_slice, &cluster, &topics, &mut out).await?,
+            Op::CreateTopic => handler::handle_create_topic(&mut body_slice, &cluster, &registry, &mut out).await?,
+            Op::CreateQueue => handler::handle_create_queue(&mut body_slice, &registry, &mut out).await?,
+            Op::BindQueue => handler::handle_bind_queue(&mut body_slice, &cluster, &registry, &mut out).await?,
+            Op::Produce => handler::handle_produce(&mut body_slice, &cluster, &registry, &mut out).await?,
+            Op::Consume => handler::handle_consume(&mut body_slice, &cluster, &registry, &mut out).await?,
+            Op::Read => handler::handle_read(&mut body_slice, &cluster, &registry, &mut out).await?,
         }
  
         rh.body_len = out.len() as u32;

@@ -12,6 +12,8 @@ pub enum Op {
     Consume = 0x03,
     Metadata = 0x04,
     Read = 0x05,
+    CreateQueue = 0x06,
+    BindQueue = 0x07,
 }
 
 impl TryFrom<u8> for Op {
@@ -23,6 +25,8 @@ impl TryFrom<u8> for Op {
             0x03 => Op::Consume,
             0x04 => Op::Metadata,
             0x05 => Op::Read,
+            0x06 => Op::CreateQueue,
+            0x07 => Op::BindQueue,
             _ => return Err(ProtoError::InvalidOpcode(v)),
         })
     }
@@ -38,6 +42,20 @@ pub enum Status {
     NotFound = 13,
     BadRequest = 400,
     ServerError = 500,
+}
+
+impl From<u16> for Status {
+    fn from(v: u16) -> Self {
+        match v {
+            0 => Status::Ok,
+            10 => Status::Redirect,
+            11 => Status::Empty,
+            12 => Status::TopicExists,
+            13 => Status::NotFound,
+            400 => Status::BadRequest,
+            _ => Status::ServerError,
+        }
+    }
 }
 
 #[derive(Debug, Error)]

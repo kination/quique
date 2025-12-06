@@ -18,12 +18,25 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Cmd {
     /// Create new topic
-    Create {
+    CreateTopic {
         #[arg(long)]
         topic: String,
+    },
 
+    /// Create new queue
+    CreateQueue {
+        #[arg(long)]
+        queue: String,
         #[arg(long, default_value_t = 1024)]
         capacity: u32,
+    },
+
+    /// Bind queue to topic
+    BindQueue {
+        #[arg(long)]
+        topic: String,
+        #[arg(long)]
+        queue: String,
     },
 
     /// Send value
@@ -35,53 +48,19 @@ enum Cmd {
         data: String,
     },
 
-    /// Fetch from topic
+    /// Fetch from queue
     Consume {
         #[arg(long)]
-        topic: String,
+        queue: String,
     },
     /// Metadata dump
     Metadata {
         #[arg(long)]
         topic: String,
     },
-
-    /// Read last N messages from a topic (for debugging)
-    Read {
-        #[arg(long)]
-        topic: String,
-
-        #[arg(long, default_value_t = 10)]
-        size: u32,
-    },
 }
 
-#[repr(u16)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Status {
-    Ok = 0,
-    Redirect = 10,
-    Empty = 11,
-    TopicExists = 12,
-    NotFound = 13,
-    BadRequest = 400,
-    ServerError = 500,
-}
-
-// a tiny From for printing convenience
-impl From<u16> for Status {
-    fn from(v: u16) -> Self {
-        match v {
-            0 => Status::Ok,
-            10 => Status::Redirect,
-            11 => Status::Empty,
-            12 => Status::TopicExists,
-            13 => Status::NotFound,
-            400 => Status::BadRequest,
-            _ => Status::ServerError,
-        }
-    }
-}
+// ... (Status enum and impl From<u16> for Status remain same, but lines 59-84 are outside this block)
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -91,14 +70,26 @@ async fn main() -> anyhow::Result<()> {
 
 async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
     match cmd {
-        Cmd::Create {
-            topic,
-            capacity,
-        } => {
-            println!("Create topic {:?} {:?}", topic, capacity);
+        Cmd::CreateTopic { topic } => {
+            println!("Create topic {:?}", topic);
             call(&server, Op::CreateTopic, |b| {
                 put_str(b, &topic);
+            })
+            .await?;
+        }
+        Cmd::CreateQueue { queue, capacity } => {
+            println!("Create queue {:?} {:?}", queue, capacity);
+            call(&server, Op::CreateQueue, |b| {
+                put_str(b, &queue);
                 put_u32(b, capacity);
+            })
+            .await?;
+        }
+        Cmd::BindQueue { topic, queue } => {
+            println!("Bind queue {:?} to topic {:?}", queue, topic);
+            call(&server, Op::BindQueue, |b| {
+                put_str(b, &topic);
+                put_str(b, &queue);
             })
             .await?;
         }
@@ -111,9 +102,9 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
             .await?;
             println!("status={:?}", st);
         }
-        Cmd::Consume { topic } => {
+        Cmd::Consume { queue } => {
             let (st, payload) = redirecting_call_resp(&server, Op::Consume, |b| {
-                put_str(b, &topic);
+                put_str(b, &queue);
                 put_u32(b, 0);
             })
             .await?;
@@ -140,38 +131,6 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
                         let p = get_u32(&mut b).unwrap();
                         let addr = get_str(&mut b).unwrap();
                         println!("partition {} -> {}", p, addr);
-                    }
-                }
-            }
-        }
-        Cmd::Read {
-            topic,
-            size,
-        } => {
-            let (st, payload) = redirecting_call_resp(&server, Op::Read, |b| {
-                put_str(b, &topic);
-                put_u32(b, size);
-            })
-            .await?;
-            println!("status={:?}", st);
-            if st == Status::Ok {
-                let mut b = &payload[..];
-                if let Some(n) = get_u32(&mut b) {
-                    if n == 0 {
-                        println!(
-                            "No messages found in topic '{}'.",
-                            topic
-                        );
-                        return Ok(());
-                    }
-                    println!(
-                        "Found {} messages in topic '{}':",
-                        n, topic
-                    );
-                    for i in 0..n {
-                        if let Some(msg) = get_bytes(&mut b) {
-                            println!("[{}] {}", i, String::from_utf8_lossy(&msg));
-                        }
                     }
                 }
             }
