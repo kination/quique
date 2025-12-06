@@ -52,6 +52,9 @@ enum Cmd {
     Consume {
         #[arg(long)]
         queue: String,
+
+        #[arg(long, default_value_t = 0)]
+        timeout: u32,
     },
     /// Metadata dump
     Metadata {
@@ -102,10 +105,10 @@ async fn handle_command(cmd: Cmd, server: &str) -> anyhow::Result<()> {
             .await?;
             println!("status={:?}", st);
         }
-        Cmd::Consume { queue } => {
+        Cmd::Consume { queue, timeout } => {
             let (st, payload) = redirecting_call_resp(&server, Op::Consume, |b| {
                 put_str(b, &queue);
-                put_u32(b, 0);
+                put_u32(b, timeout);
             })
             .await?;
             println!("status={:?}", st);

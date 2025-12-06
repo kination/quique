@@ -2,11 +2,13 @@ use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use dashmap::{DashMap, DashSet};
 use std::sync::Arc;
+use tokio::sync::Notify;
 
 /// A Queue holds messages in memory.
 pub struct Queue {
     pub name: String,
     mem: ArrayQueue<Vec<u8>>,
+    notify: Notify,
 }
 
 impl Queue {
@@ -14,15 +16,29 @@ impl Queue {
         Self {
             name,
             mem: ArrayQueue::new(cap),
+            notify: Notify::new(),
         }
     }
 
     pub fn push(&self, val: Vec<u8>) -> Result<(), Vec<u8>> {
-        self.mem.push(val)
+        let res = self.mem.push(val);
+        if res.is_ok() {
+            self.notify.notify_one();
+        }
+        res
     }
 
     pub fn pop(&self) -> Option<Vec<u8>> {
         self.mem.pop()
+    }
+
+    pub async fn pop_wait(&self) -> Vec<u8> {
+        loop {
+            if let Some(v) = self.mem.pop() {
+                return v;
+            }
+            self.notify.notified().await;
+        }
     }
 
     pub fn len(&self) -> usize {
@@ -80,14 +96,14 @@ impl Registry {
     }
 
     pub fn create_topic(&self, name: String) -> Arc<Topic> {
-        let t = Arc::new(Topic::new(name.clone()));
-        self.topics.insert(name, t.clone());
-        t
+        // If exists, return existing (get_or_insert logic)
+        // DashMap entry API or just check-then-insert (race condition possible but acceptable for now)
+        // Let's use entry to be safe-ish or just simplistic check.
+        // DashMap::entry is good.
+        self.topics.entry(name.clone()).or_insert_with(|| Arc::new(Topic::new(name))).value().clone()
     }
 
     pub fn create_queue(&self, name: String, cap: usize) -> Arc<Queue> {
-        let q = Arc::new(Queue::new(name.clone(), cap));
-        self.queues.insert(name, q.clone());
-        q
+        self.queues.entry(name.clone()).or_insert_with(|| Arc::new(Queue::new(name, cap))).value().clone()
     }
 }

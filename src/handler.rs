@@ -46,7 +46,11 @@ pub async fn handle_create_topic(
         return Ok(());
     }
 
-    registry.create_topic(topic);
+    let t = registry.create_topic(topic.clone());
+    // Auto-create default queue with same name and bind
+    registry.create_queue(topic.clone(), 1024);
+    t.bind(topic.clone());
+
     put_status(out, Status::Ok);
     Ok(())
 }
@@ -106,9 +110,6 @@ pub async fn handle_bind_queue(
     };
     
     // Check if queue exists locally?
-    // If we bind a queue that doesn't exist locally, produce will fail to push.
-    // But maybe we allow binding non-existent queues (they might be created later).
-    // But for safety, let's check.
     if registry.get_queue(&queue).is_none() {
         put_status(out, Status::NotFound);
         return Ok(());
@@ -135,22 +136,9 @@ pub async fn handle_produce(
         return Ok(());
     };
 
-    let Some(t) = registry.get_topic(&topic) else {
-        put_status(out, Status::NotFound);
-        return Ok(());
-    };
-
-    // Check leadership?
-    // User said "Retention ... later", "Cluster ... later".
-    // But existing code checks leadership.
-    // If we want to keep it simple, we can ignore leadership for now or keep it.
-    // The user said "Cluster ... later", so maybe single node for now?
-    // But `cluster` arg is still here.
-    // Let's keep leadership check for Topic to be safe, or remove it if we want to be purely local.
-    // "Producer sends to topic ... then sends to queues".
-    // If queues are on different nodes?
-    // User said "internal memory based queue".
-    // Let's assume single node or simple cluster where topic leader handles it.
+    // Auto-create topic if not exists
+    // We can just use create_topic which is idempotent now (returns existing or new)
+    // But we need to check leadership first.
     let leader = cluster.leader_of(&topic);
     if leader.id != cluster.me.id {
         put_status(out, Status::Redirect);
@@ -158,17 +146,16 @@ pub async fn handle_produce(
         return Ok(());
     }
 
+    let t = registry.create_topic(topic.clone());
+    
+    // Auto-create default queue with same name and bind (Idempotent)
+    registry.create_queue(topic.clone(), 1024);
+    t.bind(topic.clone());
+
     // Fanout to all bound queues
-    // We need to look up queues by name.
-    // If a queue is not found (deleted?), we skip it or error?
-    // RabbitMQ drops if no route, or returns unroutable.
-    // Here we just try to push to all bound queues.
     for q_name in t.bound_queues.iter() {
         if let Some(q) = registry.get_queue(&*q_name) {
-            let _ = q.push(data.clone()); // Ignore full queues? or error?
-            // "Internal memory based queue" -> if full, maybe drop or block?
-            // ArrayQueue returns Err if full.
-            // We just ignore errors for now to avoid blocking the whole produce.
+            let _ = q.push(data.clone()); 
         }
     }
 
@@ -183,35 +170,53 @@ pub async fn handle_consume(
     out: &mut BytesMut,
 ) -> Result<()> {
     // req : queue(str) | timeout_ms(u32, optional)
-    // Note: Protocol says "topic" in previous version, but we interpret it as queue name now.
     let Some(queue_name) = get_str(body) else {
         put_status(out, Status::BadRequest);
         return Ok(());
     };
-    let _timeout = get_u32(body).unwrap_or(0);
+    let timeout = get_u32(body).unwrap_or(0);
 
-    let Some(q) = registry.get_queue(&queue_name) else {
-        put_status(out, Status::NotFound);
-        return Ok(());
-    };
+    // Auto-create queue if not exists
+    // Default capacity 1024?
+    let q = registry.create_queue(queue_name.clone(), 1024);
 
-    // No leadership check for Queue?
-    // If queues are local memory, we must be on the node that holds the queue.
-    // But `Registry` is local.
-    // If we are in a cluster, we need to know where the queue lives.
-    // For now, assume all queues are local or replicated?
-    // "internal memory based queue" -> Local.
-    // If we are not the leader for the *Topic*, we might still hold the *Queue*?
-    // User said "Producer sends to topic ... then sends to queues".
-    // This implies Topic and Queue might be on same node or different.
-    // Given "internal memory", let's assume everything is local for this refactor step.
-
-    match q.pop() {
-        Some(v) => {
-            put_status(out, Status::Ok);
-            put_bytes(out, &v);
+    // Blocking consume
+    // If timeout == 0, maybe non-blocking? Or infinite?
+    // Redis BLPOP 0 means infinite.
+    // Let's assume:
+    // timeout == 0 => Non-blocking (return Empty if empty) - Wait, Redis BLPOP 0 IS infinite.
+    // But standard Redis LPOP is non-blocking.
+    // Our protocol had "timeout_ms" optional.
+    // If client sends 0 or nothing, let's assume non-blocking for backward compat with our previous "Consume" logic?
+    // But user asked for "Blocking Consume".
+    // Let's define: if timeout > 0 => wait up to timeout.
+    // If timeout == 0 => non-blocking (immediate).
+    // If we want infinite blocking, we need a flag or special value.
+    // Let's stick to: timeout=0 means non-blocking (legacy behavior).
+    // We need a way to specify infinite blocking? Or just large timeout.
+    // Let's change semantic: timeout=0 -> non-blocking. timeout>0 -> blocking ms.
+    
+    if timeout == 0 {
+        match q.pop() {
+            Some(v) => {
+                put_status(out, Status::Ok);
+                put_bytes(out, &v);
+            }
+            None => put_status(out, Status::Empty),
         }
-        None => put_status(out, Status::Empty),
+    } else {
+        // Blocking with timeout
+        // We need `tokio::time::timeout`
+        match tokio::time::timeout(std::time::Duration::from_millis(timeout as u64), q.pop_wait()).await {
+            Ok(v) => {
+                put_status(out, Status::Ok);
+                put_bytes(out, &v);
+            }
+            Err(_) => {
+                // Timeout expired
+                put_status(out, Status::Empty);
+            }
+        }
     }
     Ok(())
 }
