@@ -1,35 +1,70 @@
+use crate::storage::disk_log::DiskLog;
+use crate::storage::metadata::{BrokerMetadata, LocalMetadataStorage, MetadataStorage, QueueMeta, TopicMeta};
 use anyhow::Result;
 use crossbeam_queue::ArrayQueue;
 use dashmap::{DashMap, DashSet};
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::Notify;
 
-/// A Queue holds messages in memory.
+/// A Queue which holds messages in memory with a write-ahead log (WAL) for persistence.
 pub struct Queue {
     pub name: String,
     mem: ArrayQueue<Vec<u8>>,
     notify: Notify,
+    wal: Arc<DiskLog>,
 }
 
 impl Queue {
     pub fn new(name: String, cap: usize) -> Self {
+        let wal = Arc::new(DiskLog::open("./data", &name).expect("Failed to open WAL"));
         Self {
             name,
             mem: ArrayQueue::new(cap),
             notify: Notify::new(),
+            wal,
         }
+    }
+
+    /// Open existing queue and replay WAL
+    pub fn open(data_dir: &str, name: String, cap: usize) -> Result<Self> {
+        let wal = Arc::new(DiskLog::open(data_dir, &name)?);
+        let mem = ArrayQueue::new(cap);
+
+        // Replay unacked messages
+        let mut entries = wal.replay_unacked()?;
+        entries.sort_by_key(|(s, _)| *s);
+        for (_seq, payload) in entries {
+            let _ = mem.push(payload); // Best effort
+        }
+
+        Ok(Self {
+            name,
+            mem,
+            notify: Notify::new(),
+            wal,
+        })
     }
 
     pub fn push(&self, val: Vec<u8>) -> Result<(), Vec<u8>> {
-        let res = self.mem.push(val);
-        if res.is_ok() {
-            self.notify.notify_one();
+        // Write WAL first
+        if let Ok(seq) = self.wal.append(&val) {
+            let res = self.mem.push(val);
+            if res.is_ok() {
+                self.notify.notify_one();
+            }
+            return res;
         }
-        res
+        Err(val)
     }
 
     pub fn pop(&self) -> Option<Vec<u8>> {
-        self.mem.pop()
+        if let Some(v) = self.mem.pop() {
+            // Acknowledge in WAL
+            // TODO: Proper seq tracking
+            return Some(v);
+        }
+        None
     }
 
     pub async fn pop_wait(&self) -> Vec<u8> {
@@ -50,7 +85,7 @@ impl Queue {
     }
 }
 
-/// A Topic is a routing key that distributes messages to bound Queues.
+/// Topic: Routing key that distributes messages to bound Queues.
 pub struct Topic {
     pub name: String,
     pub bound_queues: DashSet<String>,
@@ -73,18 +108,84 @@ impl Topic {
     }
 }
 
-/// Global registry for Topics and Queues.
+/// Global registry for topic/queue with persistence.
 pub struct Registry {
     pub topics: DashMap<String, Arc<Topic>>,
     pub queues: DashMap<String, Arc<Queue>>,
+    data_dir: String,
+    metadata_store: Box<dyn MetadataStorage>,
 }
 
 impl Registry {
-    pub fn new() -> Self {
+    pub fn new(data_dir: String) -> Self {
+        let metadata_path = format!("{}/metadata.json", data_dir);
+        let metadata_store = Box::new(LocalMetadataStorage::new(metadata_path));
+        
         Self {
             topics: DashMap::new(),
             queues: DashMap::new(),
+            data_dir,
+            metadata_store,
         }
+    }
+
+    /// Load metadata and replay WAL
+    pub fn load(&self) -> Result<()> {
+        let metadata = self.metadata_store.load()?;
+        
+        // Restore queues from WAL
+        for (name, qmeta) in metadata.queues {
+            let queue = Queue::open(&self.data_dir, name.clone(), qmeta.capacity)?;
+            self.queues.insert(name, Arc::new(queue));
+        }
+        
+        // Restore topics and bindings
+        for (name, tmeta) in metadata.topics {
+            let topic = Topic::new(name.clone());
+            for q in tmeta.bound_queues {
+                topic.bind(q);
+            }
+            self.topics.insert(name, Arc::new(topic));
+        }
+        
+        Ok(())
+    }
+
+    /// Save metadata snapshot
+    pub fn save(&self) -> Result<()> {
+        let mut metadata = BrokerMetadata {
+            topics: HashMap::new(),
+            queues: HashMap::new(),
+        };
+        
+        for entry in self.topics.iter() {
+            let topic = entry.value();
+            let bound_queues: HashSet<String> = topic.bound_queues.iter()
+                .map(|r| r.key().clone())
+                .collect();
+            
+            metadata.topics.insert(
+                entry.key().clone(),
+                TopicMeta {
+                    name: topic.name.clone(),
+                    bound_queues,
+                },
+            );
+        }
+        
+        for entry in self.queues.iter() {
+            let queue = entry.value();
+            metadata.queues.insert(
+                entry.key().clone(),
+                QueueMeta {
+                    name: queue.name.clone(),
+                    capacity: queue.capacity(),
+                },
+            );
+        }
+        
+        self.metadata_store.save(&metadata)?;
+        Ok(())
     }
 
     pub fn get_topic(&self, name: &str) -> Option<Arc<Topic>> {
@@ -96,10 +197,6 @@ impl Registry {
     }
 
     pub fn create_topic(&self, name: String) -> Arc<Topic> {
-        // If exists, return existing (get_or_insert logic)
-        // DashMap entry API or just check-then-insert (race condition possible but acceptable for now)
-        // Let's use entry to be safe-ish or just simplistic check.
-        // DashMap::entry is good.
         self.topics.entry(name.clone()).or_insert_with(|| Arc::new(Topic::new(name))).value().clone()
     }
 
