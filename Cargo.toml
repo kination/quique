@@ -1,5 +1,5 @@
 [package]
-name = "quique"
+name = "toqueue"
 version = "0.0.1"
 edition = "2024"
 
@@ -18,9 +18,9 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 [[bin]]
-name = "qq-server"
+name = "toq-server"
 path = "src/main.rs"
 
 [[bin]]
-name = "qq-cli"
+name = "toq-cli"
 path = "src/cli/main.rs"

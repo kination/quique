@@ -2,11 +2,11 @@ use bytes::BytesMut;
 use clap::{Parser, Subcommand};
 use tracing_subscriber::{EnvFilter, FmtSubscriber};
 
-use quique::client::*;
-use quique::protocol::*;
+use toqueue::client::*;
+use toqueue::protocol::*;
 
 #[derive(Parser, Debug)]
-#[command(name = "qq-cli")]
+#[command(name = "toq-cli")]
 struct Cli {
     #[arg(long, default_value = "127.0.0.1:7001")]
     server: String,

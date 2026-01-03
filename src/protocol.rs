@@ -1,7 +1,7 @@
 use bytes::{Buf, BufMut, BytesMut};
 use thiserror::Error;
 
-pub const MAGIC: u32 = 0x51425553; // 'QBUS'
+pub const MAGIC: u32 = 0x544F5151; // 'TOQQ'
 pub const VERSION: u8 = 1;
 
 #[repr(u8)]
@@ -169,4 +169,206 @@ pub fn get_u32(b: &mut &[u8]) -> Option<u32> {
 }
 pub fn put_status(buf: &mut BytesMut, st: Status) {
     buf.put_u16(st as u16);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_header_encode_decode() {
+        let mut buf = BytesMut::new();
+        let header = Header {
+            magic: MAGIC,
+            version: VERSION,
+            op: Op::Produce,
+            flags: 0,
+            stream_id: 123,
+            body_len: 456,
+        };
+
+        header.encode(&mut buf);
+        assert_eq!(buf.len(), Header::LEN);
+
+        let decoded = Header::decode(&mut buf).unwrap().unwrap();
+        assert_eq!(decoded.magic, MAGIC);
+        assert_eq!(decoded.version, VERSION);
+        assert_eq!(decoded.op, Op::Produce);
+        assert_eq!(decoded.stream_id, 123);
+        assert_eq!(decoded.body_len, 456);
+    }
+
+    #[test]
+    fn test_header_decode_invalid_magic() {
+        let mut buf = BytesMut::new();
+        buf.put_u32(0xDEADBEEF);
+        buf.put_u8(VERSION);
+        buf.put_u8(Op::Produce as u8);
+        buf.put_u8(0);
+        buf.put_u8(0);
+        buf.put_u32(0);
+        buf.put_u32(0);
+
+        let result = Header::decode(&mut buf);
+        assert!(matches!(result, Err(ProtoError::InvalidMagic(_))));
+    }
+
+    #[test]
+    fn test_header_decode_invalid_version() {
+        let mut buf = BytesMut::new();
+        buf.put_u32(MAGIC);
+        buf.put_u8(99);
+        buf.put_u8(Op::Produce as u8);
+        buf.put_u8(0);
+        buf.put_u8(0);
+        buf.put_u32(0);
+        buf.put_u32(0);
+
+        let result = Header::decode(&mut buf);
+        assert!(matches!(result, Err(ProtoError::InvalidVersion(_))));
+    }
+
+    #[test]
+    fn test_header_decode_short_buffer() {
+        let mut buf = BytesMut::new();
+        buf.put_u32(MAGIC);
+        buf.put_u8(VERSION);
+
+        let result = Header::decode(&mut buf).unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_op_try_from() {
+        assert_eq!(Op::try_from(0x01).unwrap(), Op::CreateTopic);
+        assert_eq!(Op::try_from(0x02).unwrap(), Op::Produce);
+        assert_eq!(Op::try_from(0x03).unwrap(), Op::Consume);
+        assert!(Op::try_from(0xFF).is_err());
+    }
+
+    #[test]
+    fn test_status_from() {
+        assert_eq!(Status::from(0), Status::Ok);
+        assert_eq!(Status::from(10), Status::Redirect);
+        assert_eq!(Status::from(11), Status::Empty);
+        assert_eq!(Status::from(999), Status::ServerError);
+    }
+
+    #[test]
+    fn test_put_get_str() {
+        let mut buf = BytesMut::new();
+        put_str(&mut buf, "hello");
+
+        let mut slice = &buf[..];
+        let result = get_str(&mut slice).unwrap();
+        assert_eq!(result, "hello");
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn test_put_get_str_empty() {
+        let mut buf = BytesMut::new();
+        put_str(&mut buf, "");
+
+        let mut slice = &buf[..];
+        let result = get_str(&mut slice).unwrap();
+        assert_eq!(result, "");
+    }
+
+    #[test]
+    fn test_get_str_short_buffer() {
+        let buf = vec![0, 10];
+        let mut slice = &buf[..];
+        let result = get_str(&mut slice);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_put_get_bytes() {
+        let mut buf = BytesMut::new();
+        let data = vec![1, 2, 3, 4, 5];
+        put_bytes(&mut buf, &data);
+
+        let mut slice = &buf[..];
+        let result = get_bytes(&mut slice).unwrap();
+        assert_eq!(result, data);
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn test_put_get_bytes_empty() {
+        let mut buf = BytesMut::new();
+        put_bytes(&mut buf, &[]);
+
+        let mut slice = &buf[..];
+        let result = get_bytes(&mut slice).unwrap();
+        assert_eq!(result, Vec::<u8>::new());
+    }
+
+    #[test]
+    fn test_get_bytes_short_buffer() {
+        let buf = vec![0, 0, 0, 10];
+        let mut slice = &buf[..];
+        let result = get_bytes(&mut slice);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_put_get_u32() {
+        let mut buf = BytesMut::new();
+        put_u32(&mut buf, 12345);
+
+        let mut slice = &buf[..];
+        let result = get_u32(&mut slice).unwrap();
+        assert_eq!(result, 12345);
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn test_get_u32_short_buffer() {
+        let buf = vec![0, 0];
+        let mut slice = &buf[..];
+        let result = get_u32(&mut slice);
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_put_status() {
+        let mut buf = BytesMut::new();
+        put_status(&mut buf, Status::Ok);
+        assert_eq!(buf.len(), 2);
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), 0);
+
+        buf.clear();
+        put_status(&mut buf, Status::BadRequest);
+        assert_eq!(u16::from_be_bytes([buf[0], buf[1]]), 400);
+    }
+
+    #[test]
+    fn test_multiple_strings() {
+        let mut buf = BytesMut::new();
+        put_str(&mut buf, "first");
+        put_str(&mut buf, "second");
+        put_str(&mut buf, "third");
+
+        let mut slice = &buf[..];
+        assert_eq!(get_str(&mut slice).unwrap(), "first");
+        assert_eq!(get_str(&mut slice).unwrap(), "second");
+        assert_eq!(get_str(&mut slice).unwrap(), "third");
+        assert_eq!(slice.len(), 0);
+    }
+
+    #[test]
+    fn test_mixed_tlv() {
+        let mut buf = BytesMut::new();
+        put_str(&mut buf, "topic");
+        put_bytes(&mut buf, &[1, 2, 3]);
+        put_u32(&mut buf, 999);
+
+        let mut slice = &buf[..];
+        assert_eq!(get_str(&mut slice).unwrap(), "topic");
+        assert_eq!(get_bytes(&mut slice).unwrap(), vec![1, 2, 3]);
+        assert_eq!(get_u32(&mut slice).unwrap(), 999);
+        assert_eq!(slice.len(), 0);
+    }
 }

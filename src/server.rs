@@ -20,30 +20,59 @@ pub struct Server {
     registry: Arc<Registry>,
 }
 
-/// Central server application for messaging
+/// Messaging server application for messaging
 impl Server {
     pub fn new(addr: String, data_dir: String, cluster: Cluster) -> Self {
+        let registry = Arc::new(Registry::new(data_dir.clone()));
+        
+        // Load existing state
+        if let Err(e) = registry.load() {
+            tracing::warn!("Failed to load state, starting fresh: {}", e);
+        }
+        
         Self {
             addr,
             data_dir,
             cluster,
-            registry: Arc::new(Registry::new()),
+            registry,
         }
-    } 
+    }
 
     pub async fn run(self) -> Result<()> {
         let listener = TcpListener::bind(&self.addr).await?;
-        info!("quique server listening on {}", self.addr);
+        info!("toqueue server listening on {}", self.addr);
+        let cluster = self.cluster;
+        let registry = self.registry;
+        let data_dir = self.data_dir;
+
+        // Setup graceful shutdown
+        let registry_for_shutdown = registry.clone();
+        tokio::spawn(async move {
+            use tokio::signal::unix::{signal, SignalKind};
+            let mut sigterm = signal(SignalKind::terminate()).expect("Failed to setup SIGTERM handler");
+            let mut sigint = signal(SignalKind::interrupt()).expect("Failed to setup SIGINT handler");
+
+            tokio::select! {
+                _ = sigterm.recv() => info!("Received SIGTERM"),
+                _ = sigint.recv() => info!("Received SIGINT (Ctrl+C)"),
+            }
+
+            info!("Shutting down, saving state...");
+            if let Err(e) = registry_for_shutdown.save() {
+                warn!("Failed to save state: {}", e);
+            }
+            std::process::exit(0);
+        });
 
         loop {
             let (sock, _) = listener.accept().await?;
-            let me = self.cluster.clone();
-            let registry = self.registry.clone();
-            let data_dir = self.data_dir.clone();
+            let me = cluster.clone();
+            let reg = registry.clone();
+            let dir = data_dir.clone();
+            
             tokio::spawn(async move {
-                // info!("New connection on {:?}", sock.peer_addr());
-                if let Err(e) = handle_conn(sock, me, registry, data_dir).await {
-                    warn!("conn closed: {}", e);
+                if let Err(e) = handle_conn(sock, me, reg, dir).await {
+                    warn!("Connection closed: {}", e);
                 }
             });
         }
@@ -68,23 +97,37 @@ async fn handle_conn(
         // assign additional memory if buffer is <1kb
         // TODO: setup value as config
         buf.reserve(1024);
+
+        // Read socket data, and write to buffer (non-blocking async read)
         let n = sock.read_buf(&mut buf).await?;
         if n == 0 {
+            // connection closed, exit loop for graceful shutdown
             return Ok(());
         }
 
+        // Try to decode 16-byte protocol header from buffer
+        // Returns None if header not fully arrived yet (< 16 bytes)
         let hdr = match Header::decode(&mut buf)? {
             Some(h) => h,
-            None => continue,  // if header is not fully arrived...
+            None => continue,  // Wait for more data
         };
+
+        // Check if full message body has arrived
+        // Header contains body_len field indicating expected payload size
         if buf.len() < hdr.body_len as usize {
-            // keep going loop if body is not fully arrived
-            continue;
+            continue; // Wait for complete body
         }
+
+        // Extract body from buffer and freeze it (convert to immutable Bytes)
+        // split_to() removes first N bytes from buf and returns them
         let body = buf.split_to(hdr.body_len as usize).freeze();
         let mut body_slice = &body[..];
 
+        // Prepare response buffer (1KB initial capacity)
         let mut out = BytesMut::with_capacity(1024);
+
+        // Create response header, preserving op and stream_id from request
+        // magic, version, body_len will be set after handler execution
         let mut rh = Header {
             magic: 0,
             version: 0,
@@ -94,6 +137,8 @@ async fn handle_conn(
             body_len: 0,
         };
 
+        // Dispatch to appropriate handler based on operation type
+        // Each handler reads from body_slice and writes response to out
         match hdr.op {
             Op::Metadata => handler::handle_metadata(&mut body_slice, &cluster, &mut out).await?,
             Op::CreateTopic => handler::handle_create_topic(&mut body_slice, &cluster, &registry, &mut out).await?,
