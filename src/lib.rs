@@ -1,3 +1,4 @@
+pub mod client;
 pub mod cluster;
 pub mod protocol;
 pub mod handler;

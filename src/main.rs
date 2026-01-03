@@ -22,17 +22,21 @@ struct Args {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // Define tracing subscriber for structured logging
     let subscriber = FmtSubscriber::builder()
-        .with_env_filter(EnvFilter::from_default_env().add_directive("quique=info".parse()?))
+        .with_env_filter(
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new("info"))
+        )
         .finish();
     tracing::subscriber::set_global_default(subscriber).unwrap();
-
     let args = Args::parse();
     let cluster = Cluster::from_env()?;
 
     // start host server
-    let srv = Server::new(args.addr, args.data_dir, cluster);
+    if let Err(e) = Server::new(args.addr, args.data_dir, cluster).run().await {
+        tracing::error!("server error: {}", e);
+        return Err(e);
+    }
 
-    srv.run().await
+    Ok(())
 }

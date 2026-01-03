@@ -1,2 +1,13 @@
 /data
 /target
+
+
+# IDE specific files
+/.idea
+*.iml
+.vscode/
+
+# LLM specific files
+**/CLAUDE.md
+**/GEMINI.md
+**/AGENTS.md
