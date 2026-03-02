@@ -1,44 +1,44 @@
-# ToQueue
+# Snaq
 
 __This project is still working-on-progress__
 
-ToQueue is a high-performance in-memory message broker written in Rust.
+Snaq is a high-performance in-memory message broker written in Elixir.
 
 ## Quick Start
 
 ### 1. Run Server
 ```bash
-cargo run --bin toq-server
-# With logging: RUST_LOG=info cargo run --bin toq-server
+mix run --no-halt
+# With logging: ELIXIR_LOG=info mix run --no-halt
 ```
 
 ### 2. Basic Usage
 ```bash
 # Produce message to a topic
-cargo run --bin toq-cli -- produce --topic jobs --data "task1"
+./snaq-cli produce --topic jobs --data "task1"
 
 # Consume from queue (non-blocking)
-cargo run --bin toq-cli -- consume --queue jobs
+./snaq-cli consume --queue jobs
 
 # Consume with timeout (blocking, milliseconds)
-cargo run --bin toq-cli -- consume --queue jobs --timeout 5000
+./snaq-cli consume --queue jobs --timeout 5000
 ```
 
 ### 3. Fan-out to Multiple Queues
 ```bash
 # Create resources
-cargo run --bin toq-cli -- create-topic --topic events
-cargo run --bin toq-cli -- create-queue --queue logger
-cargo run --bin toq-cli -- create-queue --queue metrics
+./snaq-cli create-topic --topic events
+./snaq-cli create-queue --queue logger
+./snaq-cli create-queue --queue metrics
 
 # Bind queues to topic
-cargo run --bin toq-cli -- bind-queue --topic events --queue logger
-cargo run --bin toq-cli -- bind-queue --topic events --queue metrics
+./snaq-cli bind-queue --topic events --queue logger
+./snaq-cli bind-queue --topic events --queue metrics
 
 # Produce once, consumed by both queues
-cargo run --bin toq-cli -- produce --topic events --data "user_login"
-cargo run --bin toq-cli -- consume --queue logger
-cargo run --bin toq-cli -- consume --queue metrics
+./snaq-cli produce --topic events --data "user_login"
+./snaq-cli consume --queue logger
+./snaq-cli consume --queue metrics
 ```
 
 ## Features (TODO)
