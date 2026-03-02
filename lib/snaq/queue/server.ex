@@ -10,6 +10,10 @@ defmodule Snaq.Queue.Server do
     GenServer.start_link(__MODULE__, name, name: via(name))
   end
 
+  def child_spec(name) do
+    %{id: {__MODULE__, name}, start: {__MODULE__, :start_link, [name]}}
+  end
+
   @doc "Enqueues `data` into the named queue (fire-and-forget)."
   @spec push(String.t(), binary()) :: :ok
   def push(name, data) do

@@ -1,6 +1,5 @@
 defmodule Snaq.Topic.SupervisorTest do
   use ExUnit.Case, async: false
-  @moduletag :skip
 
   test "ensure_topic starts a new topic process" do
     name = "ts-test-#{:erlang.unique_integer([:positive])}"
