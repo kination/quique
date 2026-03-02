@@ -9,7 +9,8 @@ defmodule Snaq.Topic.Supervisor do
     DynamicSupervisor.init(strategy: :one_for_one)
   end
 
-  # Idempotent: safe to call even if topic already exists
+  @doc "Starts a named topic process under this supervisor (idempotent)."
+  @spec ensure_topic(String.t()) :: :ok | {:error, term()}
   def ensure_topic(name) do
     case DynamicSupervisor.start_child(__MODULE__, {Snaq.Topic.Server, name}) do
       {:ok, _pid} -> :ok
