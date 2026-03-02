@@ -6,7 +6,9 @@ defmodule Snaq.Application do
 
     children = [
       {Registry, keys: :unique, name: Snaq.QueueRegistry},
+      {Registry, keys: :unique, name: Snaq.TopicRegistry},
       Snaq.Queue.Supervisor,
+      Snaq.Topic.Supervisor,
       {Task.Supervisor, name: Snaq.TCP.TaskSupervisor},
       {Snaq.TCP.Server, port: port}
     ]
