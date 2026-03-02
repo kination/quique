@@ -8,22 +8,32 @@ defmodule Snaq.CLI do
   def main(args) do
     {opts, argv, _} =
       OptionParser.parse(args,
-        strict: [queue: :string, data: :string, timeout: :integer, host: :string, port: :integer]
+        strict: [
+          topic: :string,
+          queue: :string,
+          data: :string,
+          timeout: :integer,
+          host: :string,
+          port: :integer
+        ]
       )
 
     case argv do
       ["produce" | _] -> run_produce(opts)
       ["consume" | _] -> run_consume(opts)
+      ["create-topic" | _] -> run_create_topic(opts)
+      ["create-queue" | _] -> run_create_queue(opts)
+      ["bind-queue" | _] -> run_bind_queue(opts)
       _ -> usage()
     end
   end
 
   defp run_produce(opts) do
-    queue = fetch!(opts, :queue, "produce")
+    topic = fetch!(opts, :topic, "produce")
     data = fetch!(opts, :data, "produce")
 
     with_socket(opts, fn socket ->
-      body = put_str(queue) <> put_bytes(data)
+      body = put_str(topic) <> put_bytes(data)
       send_request(socket, 0x02, body)
 
       case recv_response(socket, 5000) do
@@ -56,6 +66,52 @@ defmodule Snaq.CLI do
 
         {:error, r} ->
           IO.puts("Error: #{inspect(r)}")
+      end
+    end)
+  end
+
+  defp run_create_topic(opts) do
+    topic = fetch!(opts, :topic, "create-topic")
+
+    with_socket(opts, fn socket ->
+      body = put_str(topic)
+      send_request(socket, 0x01, body)
+
+      case recv_response(socket, 5000) do
+        {:ok, %{status: 0}} -> IO.puts("OK")
+        {:ok, %{status: s}} -> IO.puts("Error: status #{s}")
+        {:error, r} -> IO.puts("Error: #{inspect(r)}")
+      end
+    end)
+  end
+
+  defp run_create_queue(opts) do
+    queue = fetch!(opts, :queue, "create-queue")
+
+    with_socket(opts, fn socket ->
+      body = put_str(queue)
+      send_request(socket, 0x06, body)
+
+      case recv_response(socket, 5000) do
+        {:ok, %{status: 0}} -> IO.puts("OK")
+        {:ok, %{status: s}} -> IO.puts("Error: status #{s}")
+        {:error, r} -> IO.puts("Error: #{inspect(r)}")
+      end
+    end)
+  end
+
+  defp run_bind_queue(opts) do
+    topic = fetch!(opts, :topic, "bind-queue")
+    queue = fetch!(opts, :queue, "bind-queue")
+
+    with_socket(opts, fn socket ->
+      body = put_str(topic) <> put_str(queue)
+      send_request(socket, 0x07, body)
+
+      case recv_response(socket, 5000) do
+        {:ok, %{status: 0}} -> IO.puts("OK")
+        {:ok, %{status: s}} -> IO.puts("Error: status #{s}")
+        {:error, r} -> IO.puts("Error: #{inspect(r)}")
       end
     end)
   end
@@ -112,8 +168,11 @@ defmodule Snaq.CLI do
   defp usage do
     IO.puts("""
     Usage:
-      snaq-cli produce --queue <name> --data <data>
+      snaq-cli produce --topic <name> --data <data>
       snaq-cli consume --queue <name> [--timeout <ms>]
+      snaq-cli create-topic --topic <name>
+      snaq-cli create-queue --queue <name>
+      snaq-cli bind-queue --topic <name> --queue <name>
 
     Options:
       --host <host>   Server host (default: 127.0.0.1)
