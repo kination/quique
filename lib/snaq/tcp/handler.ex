@@ -29,12 +29,22 @@ defmodule Snaq.TCP.Handler do
     end
   end
 
-  # Produce: body = put_str(queue_name) <> put_bytes(data)
+  # CreateTopic: body = put_str(topic_name)
+  defp dispatch(op, sid, body) when op == Ops.create_topic() do
+    {topic_name, _} = Codec.get_str(body)
+
+    case Broker.create_topic(topic_name) do
+      :ok -> Codec.encode_response(sid, Ops.ok())
+      _ -> Codec.encode_response(sid, Ops.server_error())
+    end
+  end
+
+  # Produce: body = put_str(topic_name) <> put_bytes(data)
   defp dispatch(op, sid, body) when op == Ops.produce() do
-    {queue_name, rest} = Codec.get_str(body)
+    {topic_name, rest} = Codec.get_str(body)
     {data, _} = Codec.get_bytes(rest)
 
-    case Broker.push(queue_name, data) do
+    case Broker.produce(topic_name, data) do
       :ok -> Codec.encode_response(sid, Ops.ok())
       _ -> Codec.encode_response(sid, Ops.server_error())
     end
@@ -51,14 +61,30 @@ defmodule Snaq.TCP.Handler do
         else: Broker.pop_wait(queue_name, timeout_ms)
 
     case result do
-      {:ok, data} ->
-        Codec.encode_response(sid, Ops.ok(), Codec.put_bytes(data))
+      {:ok, data} -> Codec.encode_response(sid, Ops.ok(), Codec.put_bytes(data))
+      :empty -> Codec.encode_response(sid, Ops.empty())
+      _ -> Codec.encode_response(sid, Ops.server_error())
+    end
+  end
 
-      :empty ->
-        Codec.encode_response(sid, Ops.empty())
+  # CreateQueue: body = put_str(queue_name)
+  defp dispatch(op, sid, body) when op == Ops.create_queue() do
+    {queue_name, _} = Codec.get_str(body)
 
-      _ ->
-        Codec.encode_response(sid, Ops.server_error())
+    case Broker.create_queue(queue_name) do
+      :ok -> Codec.encode_response(sid, Ops.ok())
+      _ -> Codec.encode_response(sid, Ops.server_error())
+    end
+  end
+
+  # BindQueue: body = put_str(topic_name) <> put_str(queue_name)
+  defp dispatch(op, sid, body) when op == Ops.bind_queue() do
+    {topic_name, rest} = Codec.get_str(body)
+    {queue_name, _} = Codec.get_str(rest)
+
+    case Broker.bind(topic_name, queue_name) do
+      :ok -> Codec.encode_response(sid, Ops.ok())
+      _ -> Codec.encode_response(sid, Ops.server_error())
     end
   end
 
