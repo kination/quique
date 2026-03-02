@@ -1,6 +1,6 @@
 /data
 /target
-
+/.internal-docs
 
 # IDE specific files
 /.idea
@@ -8,6 +8,19 @@
 .vscode/
 
 # LLM specific files
+/.agent
+/.claude
 **/CLAUDE.md
 **/GEMINI.md
 **/AGENTS.md
+
+# Elixir & Erlang specific files
+/_build/
+/deps/
+*.ez
+*.beam
+.elixir_ls/
+erl_crash.dump
+cover/
+doc/
+/snaq-cli
