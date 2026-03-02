@@ -4,19 +4,26 @@ defmodule Snaq.Queue.Server do
 
   # state: %{name, messages: :queue.new(), waiting: [{from, timer_ref}]}
 
+  @doc "Starts a named queue GenServer registered via Registry."
+  @spec start_link(String.t()) :: GenServer.on_start()
   def start_link(name) do
     GenServer.start_link(__MODULE__, name, name: via(name))
   end
 
+  @doc "Enqueues `data` into the named queue (fire-and-forget)."
+  @spec push(String.t(), binary()) :: :ok
   def push(name, data) do
     GenServer.cast(via(name), {:push, data})
   end
 
+  @doc "Non-blocking dequeue. Returns `{:ok, data}` or `:empty`."
+  @spec pop(String.t()) :: {:ok, binary()} | :empty
   def pop(name) do
     GenServer.call(via(name), :pop)
   end
 
-  # Blocks until message arrives or timeout fires
+  @doc "Blocks until a message arrives or `timeout_ms` elapses. Returns `{:ok, data}` or `:empty`."
+  @spec pop_wait(String.t(), non_neg_integer()) :: {:ok, binary()} | :empty
   def pop_wait(name, timeout_ms) do
     GenServer.call(via(name), {:pop_wait, timeout_ms}, timeout_ms + 2000)
   end
@@ -57,7 +64,7 @@ defmodule Snaq.Queue.Server do
 
       {:empty, _} ->
         timer = Process.send_after(self(), {:timeout, from}, timeout_ms)
-        {:noreply, %{state | waiting: state.waiting ++ [{from, timer}]}}
+        {:noreply, %{state | waiting: [{from, timer} | state.waiting]}}
     end
   end
 

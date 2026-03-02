@@ -1,4 +1,4 @@
-defmodule Toqueue.MixProject do
+defmodule Snaq.MixProject do
   use Mix.Project
 
   def project do
